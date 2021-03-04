@@ -1,0 +1,95 @@
+df = read.csv(file.choose(), stringsAsFactors = F)#import data frame 
+library(dplyr)
+head(df)
+
+#we found a mistake of day's name, so we replace it here 
+df$Day[df$Day == 30] <- 28
+
+#delete countries most confirmed cases are 0 by looking at df data table
+test<-df[-c(6:10,16:20,31:35,51:60,71:85,96:105,111:115,131:145,160:164,170:179,
+           185:204,215:219,225:259,300:304,310:324,330:334,345:354,379:374,380:399,
+           405:409,415:424,430:439,465:474,500:504,515:524,540:544,560:564,580:589,
+           605:609,615:624,634:638,649:663,669:673),]
+df1<-na.omit(test)#delete empty/NA values 
+
+cnt<- data.frame(unique(df$Country))#original number of countries
+cnt<- data.frame(unique(df1$Country))#numbers of country after deletion
+
+#calculate growth rate
+#credit from: https://community.rstudio.com/t/growth-rate-calculation-in-r/38675/2
+dg<-subset(df1, select= c(confirmed))#create a new data frame named dg that contain confirmed cases only 
+#build a function and apply to dg
+Y <- function(x)x+1#confirmed +1 because log 0 is error
+dg1<-data.frame(lapply(dg,Y))
+# we did not subset original day from df1 directly, because it is not convenient for calculation
+dg1$day <- c(1:349)#add a column of day, 
+
+growth_rate = dg1 %>%
+    arrange(day) %>%
+    mutate(Diff_day = day - lag(day),
+           Diff_growth = confirmed - lag(confirmed),
+           rate_percent = (Diff_growth / Diff_day)/confirmed)
+options(scipen=999)#disable scientific rotation
+
+gr<-subset(growth_rate, select= c(rate_percent))#subset rate
+df2<-cbind(df1,gr)
+df3 <- df2[df2$rate_percent>0,]#exclude value <=0
+df4<-na.omit(df3)#delete empty/NA values 
+colnames(df4)[12] <- "Growth.rate"#rename growth_percent to Growth.rate
+
+
+library(ggplot2)
+
+#Scatter plot of growth rate vs. variables, labeled by Continental 
+ggplot(df4, aes(x=Growth.rate, y=Temp.C, color=Continental)) + geom_point()
+ggplot(df4, aes(x=Growth.rate, y=Humidity, color=Continental)) + geom_point()
+ggplot(df4, aes(x=Growth.rate, y=SunHour, color=Continental)) + geom_point()
+ggplot(df4, aes(x=Growth.rate, y=Windspeed, color=Continental)) + geom_point()
+
+
+#scatter plot of Temp and humidity, labeled by growth rate
+ggplot(df4, aes(x=Temp.C, y=Humidity, color=Growth.rate)) +
+    geom_point()+scale_color_gradient(low="gold", high="blue")
+#scatter plot of sunlight and wind speed
+ggplot(df4, aes(x=SunHour, y=Windspeed, color=Growth.rate)) +
+    geom_point()+scale_color_gradient(low="gold", high="forestgreen")
+    
+
+##PCA
+library(vegan)  #bstick and screeplot come from vega
+library(factoextra)
+
+df.pca<-prcomp(df4[,c(7,8,9,10)],scale=TRUE)
+#PCA on correlation matrix, 
+summary(df.pca) #eigenvalues
+print(df.pca)#eigenvectors eigenvalues 
+bstick(df.pca)
+screeplot(df.pca, bstick = TRUE, type = "lines")
+#PCA variation plot
+fviz_pca_var(df.pca,
+             axes = c(1,2),          
+             col.var = "contrib", # Color by contributions to the PC
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE,     # Avoid text overlapping
+)
+##We found that PC1 and PC2 is useful in our data set 
+##So we choose all four variables 
+
+##linear regression 
+##Using linear regression to test the relationship between covid19 growth rate and our choosen variables
+lm1 = lm(Growth.rate ~ Humidity + SunHour + Windspeed + Temp.C, data=df4)
+summary(lm1)#only temperature is significant 
+
+#we want to delete the most insignificant variables and to see if there are any change to the result
+lm2 = lm(Growth.rate ~ Humidity + Windspeed + Temp.C, data=df4)#delete sunhour
+summary(lm2)#Wind speed is the most insignificant, temp still significant 
+lm3 = lm(Growth.rate ~ Humidity + Temp.C, data=df4)#delete wind speed
+summary(lm3)#Humidity is the most insignificant, temp still significant 
+lm4 = lm(Growth.rate ~ Temp.C, data=df4)#delete humidity 
+#temperature is the only significant variable, so we test how it fits to a linear regression when dependent is growth rate
+summary(lm4)
+plot(lm4)#plot growth rate vs. temperature 
+
+##AIC
+step(lm1)
+##AIC shows that growth rate vs temperature + humidity could be a good lm model 
